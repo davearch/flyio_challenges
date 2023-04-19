@@ -22,6 +22,7 @@
 #include <queue>
 #include <future>
 #include <random>
+#include "TreeNode.h"
 
 using json = nlohmann::json;
 using namespace std;
@@ -63,20 +64,18 @@ public:
     json rpc(const string& dest, const json& body);
     json retryRPC(const string& dest, const json& body);
     void on(const string& type, const function<void(json)>& handler);
-    void handleInit(const json& req, queue<Message>& q, mutex& mtx, condition_variable& cv);
+    void handleInit(const json& req);
     void maybeReplyError(const json& req, const exception& e);
     void handle(const json& req);
     static string generate_uuid();
     void stop();
     void push_message(const Message& msg);
-//    void process_messages();
     void gossip();
 
     [[noreturn]] void run();
 private:
     bool stop_gossip_thread = false;
     mutex mtx_;
-    condition_variable cv_;
     queue<Message> q_;
 };
 

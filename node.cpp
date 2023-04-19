@@ -81,12 +81,12 @@ void Node::on(const string &type, const function<void(json)> &handler) {
     handlers[type] = handler;
 }
 
-void Node::handleInit(const json &req, queue<Message>& q, mutex& mtx, condition_variable& cv) {
+void Node::handleInit(const json &req) {
     this->nodeId = req["body"]["node_id"];
     this->nodeIds = req["body"]["node_ids"].get<vector<string>>();
     thread([&]() {
         while (!stop_gossip_thread) {
-            this_thread::sleep_for(chrono::milliseconds(1000));
+            this_thread::sleep_for(chrono::milliseconds(100));
             this->push_message({Event::Injected, InjectedPayload::Gossip});
         }
     }).detach();
@@ -130,11 +130,8 @@ void Node::handle(const json &req) {
         string type = body["type"];
         if (type == "init") {
             cerr << "init called" << endl;
-            mutex mtx;
-            condition_variable cv;
-            queue<Message> q;
 
-            handleInit(req, q, mtx, cv);
+            handleInit(req);
             auto handler = handlers["init"];
             if (handler) {
                 handler(req);
@@ -163,19 +160,7 @@ void Node::handle(const json &req) {
 void Node::push_message(const Message& msg) {
     unique_lock<mutex> lock(mtx_);
     q_.push(msg);
-    cv_.notify_one();
 }
-
-//void Node::process_messages() {
-//    while (true) {
-//        unique_lock<mutex> lock(mtx_);
-//        cv_.wait(lock, [this]() { return !q_.empty();});
-//
-//        auto msg = q_.front();
-//        q_.pop();
-//        lock.unlock();
-//    }
-//}
 
 void Node::gossip() {
     for (const auto &peer: this->peers) {
@@ -184,12 +169,37 @@ void Node::gossip() {
         set_difference(this->messages.begin(), this->messages.end(),
                        this->peerMessages[peer].begin(), this->peerMessages[peer].end(),
                        inserter(messages_to_send, messages_to_send.begin()));
+        // if the set_difference is empty, then skip
+        if (messages_to_send.empty()) {
+            continue;
+        }
         // send the whole set as one message
         this->send(peer, {{"type",    "gossip"},
                          {"message", messages_to_send},
                          {"msg_id",  this->newMsgId()}});
     }
+}
 
+string Node::generate_uuid() {
+    static random_device dev;
+    static mt19937 rng(dev());
+
+    uniform_int_distribution<int> dist(0, 15);
+
+    const char *v = "0123456789abcdef";
+    const bool dash[] = { 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0 };
+
+    string res;
+    for (bool i : dash) {
+        if (i) res += "-";
+        res += v[dist(rng)];
+        res += v[dist(rng)];
+    }
+    return res;
+}
+
+void Node::stop() {
+    stop_gossip_thread = true;
 }
 
 [[noreturn]] void Node::run() {
@@ -229,35 +239,5 @@ void Node::gossip() {
                 this_thread::yield();
             }
         }
-
-        string line;
-        getline(cin, line);
-        if (line.empty()) {
-            continue;
-        }
-        json req = json::parse(line);
-        handle(req);
     }
-}
-
-string Node::generate_uuid() {
-    static random_device dev;
-    static mt19937 rng(dev());
-
-    uniform_int_distribution<int> dist(0, 15);
-
-    const char *v = "0123456789abcdef";
-    const bool dash[] = { 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0 };
-
-    string res;
-    for (bool i : dash) {
-        if (i) res += "-";
-        res += v[dist(rng)];
-        res += v[dist(rng)];
-    }
-    return res;
-}
-
-void Node::stop() {
-    stop_gossip_thread = true;
 }

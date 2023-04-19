@@ -30,9 +30,22 @@ int main() {
         }
         node.peerMessages[req["src"]].insert(new_messages.begin(), new_messages.end());
         node.messages.insert(new_messages.begin(), new_messages.end());
+        node.reply(req, {{"type", "gossip_ok"}});
+    });
+
+    node.on("gossip_ok", [&node](const json &req) {
+        // add the messages they are okaying to, to their set of messages in peerMessages
+        set<int> new_messages;
+        for (const int msg : req["body"]["message"]) {
+            new_messages.insert(msg);
+        }
+        node.peerMessages[req["src"]].insert(new_messages.begin(), new_messages.end());
     });
 
     node.on("broadcast", [&node](const json& req) {
+        // print req to stderr
+        cerr << "broadcast called with " << req.dump() << endl;
+
         int msg = req["body"]["message"];
         node.peerMessages[req["src"]].insert(msg);
         node.messages.insert(msg);
@@ -48,22 +61,15 @@ int main() {
     });
 
     node.on("topology", [&node](const json& req) {
-//        json topology = req["body"]["topology"];
-//        // topology looks like this: {"n0" ("n3" "n1"), "n1" ("n4" "n2" "n0"), "n2" ("n1"), "n3" ("n0" "n4"), "n4" ("n1" "n3")}, set peers to this
-//        for (auto& [key, value] : topology.items()) {
-//            node.peers.insert(key);
-//            for (auto& peer : value) {
-//                node.peers.insert(peer);
-//            }
-//        }
-//        cerr << "topology received: " << req << endl;
-        node.peers = req["body"]["topology"][node.nodeId];
+        json topology = req["body"]["topology"][node.nodeId];
+        for (auto& peer : topology) {
+            node.peers.insert(peer);
+        }
         json msg = {
                 {"type", "topology_ok"},
         };
         node.reply(req, msg);
     });
 
-    // start a separate thread that will periodically send gossip calls to our
     node.run();
 }
