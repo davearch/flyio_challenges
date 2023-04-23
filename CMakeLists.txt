@@ -5,4 +5,4 @@ set(CMAKE_CXX_STANDARD 20)
 
 include_directories("include")
 
-add_executable(flyio_challenges main.cpp include/json.hpp node.h node.cpp)
+add_executable(flyio_challenges main.cpp include/json.hpp node.h node.cpp VectorClock.cpp VectorClock.h)

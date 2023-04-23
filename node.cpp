@@ -48,12 +48,11 @@ json Node::rpc(const string &dest, const json &body) {
         p.set_value(reply);
     };
     thread([this, dest, body2, msgId]() {
-        this_thread::sleep_for(chrono::milliseconds(rpcTimeout));
-
         auto it = replyHandlers.find(msgId);
         if (it != replyHandlers.end()) {
             auto handler = it->second;
             replyHandlers.erase(it);
+
             json err = {
                     {"type", "error"},
                     {"in_reply_to", msgId},
@@ -84,12 +83,6 @@ void Node::on(const string &type, const function<void(json)> &handler) {
 void Node::handleInit(const json &req) {
     this->nodeId = req["body"]["node_id"];
     this->nodeIds = req["body"]["node_ids"].get<vector<string>>();
-    thread([&]() {
-        while (!stop_gossip_thread) {
-            this_thread::sleep_for(chrono::milliseconds(100));
-            this->push_message({Event::Injected, InjectedPayload::Gossip});
-        }
-    }).detach();
     cerr << "init: " << req << endl;
     cerr << "Node " << nodeId << " initialized" << endl;
 }
@@ -157,87 +150,17 @@ void Node::handle(const json &req) {
     }
 }
 
-void Node::push_message(const Message& msg) {
-    unique_lock<mutex> lock(mtx_);
-    q_.push(msg);
-}
-
-void Node::gossip() {
-    for (const auto &peer: this->peers) {
-        set<int> messages_to_send;
-        // for all messages that I know that the peer does not know, send them to the peer
-        set_difference(this->messages.begin(), this->messages.end(),
-                       this->peerMessages[peer].begin(), this->peerMessages[peer].end(),
-                       inserter(messages_to_send, messages_to_send.begin()));
-        // if the set_difference is empty, then skip
-        if (messages_to_send.empty()) {
+[[noreturn]] void Node::run() {
+    while (true) {
+        string line;
+        getline(cin, line);
+        if (line.empty()) {
             continue;
         }
-        // send the whole set as one message
-        this->send(peer, {{"type",    "gossip"},
-                         {"message", messages_to_send},
-                         {"msg_id",  this->newMsgId()}});
-    }
-}
-
-string Node::generate_uuid() {
-    static random_device dev;
-    static mt19937 rng(dev());
-
-    uniform_int_distribution<int> dist(0, 15);
-
-    const char *v = "0123456789abcdef";
-    const bool dash[] = { 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0 };
-
-    string res;
-    for (bool i : dash) {
-        if (i) res += "-";
-        res += v[dist(rng)];
-        res += v[dist(rng)];
-    }
-    return res;
-}
-
-void Node::stop() {
-    stop_gossip_thread = true;
-}
-
-[[noreturn]] void Node::run() {
-
-    while (true) {
-        // launch async task to read from stdin
-        auto input_future = async(launch::async, []() {
-            string line;
-            getline(cin, line);
-            return line;
+        json req = json::parse(line);
+        thread handler_thread([this, req]() {
+            this->handle(req);
         });
-
-        while (true) {
-            if (input_future.wait_for(chrono::milliseconds(1)) == future_status::ready) {
-                string line = input_future.get();
-                if (!line.empty()) {
-                    json req = json::parse(line);
-                    handle(req);
-                }
-                break;
-            }
-
-            unique_lock<mutex> lock(mtx_);
-            if (!q_.empty()) {
-                auto msg = q_.front();
-                q_.pop();
-                lock.unlock();
-                if (msg.event == Event::Injected) {
-                    if (msg.payload == InjectedPayload::Gossip) {
-                        gossip();
-                    }
-                } else if (msg.event == Event::EndOfFile) {
-                    this->stop();
-                }
-            } else {
-                lock.unlock();
-                this_thread::yield();
-            }
-        }
+        handler_thread.detach();
     }
 }

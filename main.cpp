@@ -6,50 +6,39 @@
 int main() {
     Node node{};
 
-    node.on("echo", [&node](const json &req) {
-        json msg = {
-                {"type", "echo_ok"},
-                {"echo", req["body"]["echo"]}
-        };
-        node.reply(req, msg);
-    });
-
-    node.on("generate", [&node](const json &req) {
-        string uuid = Node::generate_uuid();
-        json msg = {
-                {"type", "generate_ok"},
-                {"id", uuid}
-        };
-        node.reply(req, msg);
-    });
-
-    node.on("gossip", [&node](const json &req) {
-        set<int> new_messages;
-        for (const int msg : req["body"]["message"]) {
-            new_messages.insert(msg);
-        }
-        node.peerMessages[req["src"]].insert(new_messages.begin(), new_messages.end());
-        node.messages.insert(new_messages.begin(), new_messages.end());
-        node.reply(req, {{"type", "gossip_ok"}});
-    });
-
-    node.on("gossip_ok", [&node](const json &req) {
-        // add the messages they are okaying to, to their set of messages in peerMessages
-        set<int> new_messages;
-        for (const int msg : req["body"]["message"]) {
-            new_messages.insert(msg);
-        }
-        node.peerMessages[req["src"]].insert(new_messages.begin(), new_messages.end());
-    });
-
     node.on("broadcast", [&node](const json& req) {
-        // print req to stderr
-        cerr << "broadcast called with " << req.dump() << endl;
-
-        int msg = req["body"]["message"];
-        node.peerMessages[req["src"]].insert(msg);
-        node.messages.insert(msg);
         node.reply(req, {{"type", "broadcast_ok"}});
+        string msg = req["body"]["message"];
+        node.peerMessages[node.nodeId].insert(msg);
+        bool new_msg = false;
+        if (!node.messages.contains(msg)) {
+            node.messages.insert(msg);
+            new_msg = true;
+        }
+        if (new_msg) {
+            cerr << "Node " << node.nodeId << " received new message " << msg << endl;
+            // make a stack of peers to send to
+            set<string> peers_to_send_to;
+            for (auto& peer : node.peers) {
+                if (!node.peerMessages[peer].contains(msg)) {
+                    peers_to_send_to.insert(peer);
+                }
+            }
+            // send to peers
+            while (!peers_to_send_to.empty()) {
+                for (auto& peer : peers_to_send_to) {
+                    json reply = node.rpc(peer, {{"type", "broadcast"}, {"message", msg}});
+                    if (reply["type"] == "broadcast_ok") {
+                        cerr << "Node " << node.nodeId << " received ack from " << peer << " for msg: " << msg << endl;
+                        node.peerMessages[peer].insert(msg);
+                        peers_to_send_to.erase(peer);
+                    }
+                }
+                // wait a bit before trying again
+                this_thread::sleep_for(chrono::milliseconds(100));
+            }
+            cerr << "Node " << node.nodeId << " finished broadcasting message " << msg << endl;
+        }
     });
 
     node.on("read", [&node](const json& req) {

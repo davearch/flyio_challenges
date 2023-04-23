@@ -45,15 +45,16 @@ class Node {
 public:
     string nodeId;
     vector<string> nodeIds;
-    int rpcTimeout = 1000;
+    int rpcTimeout = 100;
     int nextMsgId = 0;
     map<int, function<void(json)>> replyHandlers;
+    mutex replyHandlersMutex;
     unordered_map<string, function<void(json)>> handlers;
 
-    set<int> messages;
+    set<string> messages;
     set<string> peers;
     // map of peer_id -> set of messages that I know that it knows
-    unordered_map<string, set<int>> peerMessages;
+    unordered_map<string, set<string>> peerMessages;
 
     Node() = default;
     string getNodeId();
@@ -67,16 +68,8 @@ public:
     void handleInit(const json& req);
     void maybeReplyError(const json& req, const exception& e);
     void handle(const json& req);
-    static string generate_uuid();
-    void stop();
-    void push_message(const Message& msg);
-    void gossip();
 
     [[noreturn]] void run();
-private:
-    bool stop_gossip_thread = false;
-    mutex mtx_;
-    queue<Message> q_;
 };
 
 
